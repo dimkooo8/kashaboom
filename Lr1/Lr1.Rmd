@@ -1,0 +1,205 @@
+# Исследование возможностей автоматизации сбора данных о доменах
+
+## Цель работы
+
+Собрать информацию о компаниях.
+
+## Выбранные компании и их URL
+
+|Company                       |URL         |
+|:----------------------------:|:----------:|
+|Analog Devices Inc            |analog.com  |
+|McKesson Corporation          |mckesson.com|
+|Anadarko Petroleum Corporation|oxy.com     |
+|Equinix Inc.                  |equinix.com |
+|Hevlett Packard Enterprise Co.|hpe.com     |
+
+## Собираемые данные
+
+1. Домен
+2. IP
+3. IP Netblock
+3. Страна, город
+4. Адрес
+5. Телефон
+6. Хостинг (при наличии)
+7. Открытые порты
+8. Используемые web-технологии на сайте
+
+## Используемое ПО
+
+1. Язык R
+2. Rstudio
+
+## Варианты решения задачи
+1. Собрать информацию вручную с помощью веб-браузера, инструментов whois, dig, nmap и т.д.
+2. Использовать интегрированные инструменты такие как SpiderFoot, Maltego CE, Datasploit, Recon-ng
+3. Самостоятельно разработать (для образовательных целей) автоматизированное решение для сбора информации.
+В данной работе используется третий вариант решения задачи.
+
+## Общий план выполнения
+
+1. Написание функции/скрипта для сбора требуемой информации
+2. Сбор информации о компаниях
+
+## Ход работы
+```{r, cash=TRUE}
+library(tidyverse)
+get_sum_df <- function(company_url) {
+  country_state <- NA
+  dig <- system2('dig', company_url, stdout = TRUE)
+  ip <- dig %>%
+    grep(pattern = company_url, value = TRUE) %>%
+    str_extract(pattern = "\\b(?:[0-9]{1,3}\\.){3}[0-9]{1,3}\\b")
+  ip <- ip[!is.na(ip)]
+  
+  whois <- system2('whois', ip[1], stdout = TRUE)
+  phones <- whois %>%
+    grep(pattern = "Phone", value = TRUE, ignore.case = TRUE) %>%
+    str_squish() %>%
+    str_split(pattern = " ") %>%
+    data.table::transpose() %>%
+    .[[2]] %>%
+    unique() %>%
+    str_c(collapse = " ")
+  
+  netblock <- whois %>%
+    grep(pattern = "CIDR", value = TRUE, ignore.case = TRUE) %>%
+    str_squish() %>%
+    str_split(pattern = " ", simplify = TRUE) %>%
+    .[-1] %>%
+    str_c(collapse = " ")
+  
+  country <- whois %>%
+    grep(pattern = "Country",
+         value = TRUE,
+         ignore.case = TRUE) %>%
+    str_squish() %>%
+    str_split(pattern = " ", simplify = TRUE) %>%
+    .[-1]
+  
+  country_state <- whois %>%
+    grep(pattern = "State",
+         value = TRUE,
+         ignore.case = TRUE) %>%
+    str_squish() %>%
+    str_split(pattern = " ", simplify = TRUE) %>%
+    .[-1]
+  if(length(country_state)==0) country_state <- NA
+  
+  address <- whois %>%
+    grep(pattern = "address",
+         value = TRUE,
+         ignore.case = TRUE) %>%
+    str_squish() %>%
+    str_split(pattern = " ", simplify = TRUE) %>%
+    .[-1] %>%
+    str_c(collapse = " ")
+  
+  hosting <- whois %>%
+    grep(pattern = "Hosting",
+         value = TRUE,
+         ignore.case = TRUE) %>%
+    str_squish() %>%
+    str_split(pattern = " ")
+  hosting <- lapply(hosting, collapse = " ", str_c) %>%
+    str_c(collapse = " ")
+  
+  nmap <-
+    system2('nmap',
+            args = c('-p', '22,21,80,443', ip[1]),
+            stdout = TRUE)
+  ports <- nmap %>%
+    grep(pattern = "open",
+         value = TRUE,
+         ignore.case = TRUE) %>%
+    str_squish() %>%
+    str_split(pattern = " ") %>%
+    data.table::transpose() %>%
+    .[[1]] %>%
+    str_c(collapse = " ")
+  ip <- str_c(ip,collapse = ' ')
+  
+  company_sum <-
+    data.frame(
+      csum = c( 
+        company_url,
+        ip,
+        netblock,
+        country,
+        country_state,
+        address,
+        phones,
+        hosting,
+        ports
+      ),
+      row.names = c(
+        'company_url',
+        'ip',
+        'netblock',
+        'country',
+        'country_state',
+        'address',
+        'phones',
+        'hosting',
+        'ports'
+      )
+    )
+  company_sum
+  
+}
+urls <- c("analog.com","mckession.com","southwest.com","oxy.com","hpe.com")
+dfs <- lapply(urls, get_sum_df) # применение полученной функции к вектору, на выходе функции - список из одноколоночных датафреймов
+result <- bind_cols(dfs) # объединение в один датафрейм
+
+# задаем названия строк
+row.names(result) <- c('company_url',
+        'ip',
+        'netblock',
+        'country',
+        'country_state',
+        'address',
+        'phones',
+        'hosting',
+        'ports'
+      )
+# задаем названия столбцов из первой строки полученного датафрейма (предварительно переведя в тип character)
+colnames(result) <- map(result[1,],as.character) %>% unlist()
+# удалим теперь первую строку таблицы - она дублирует названия столбцов
+result <- result[-1,]
+# Выводим таблицу
+knitr::kable(result)
+```
+
+"analog.com","allstate.com","suntrust.com","baxter.com","marathonpetroleum.com"
+```{r, cache=TRUE}
+library(rappalyzer)
+rappalyze("analog.com")
+```
+
+```{r, cache=TRUE}
+library(rappalyzer)
+rappalyze("mckession.com")
+```
+
+```{r, cache=TRUE}
+library(rappalyzer)
+rappalyze("southwest.com")
+```
+
+```{r, cache=TRUE}
+library(rappalyzer)
+rappalyze("oxy.com")
+```
+
+```{r, cache=TRUE}
+library(rappalyzer)
+rappalyze("hpe.com")
+```
+## Оценка результата
+
+Автоматизированное решение для сбора информации позволяет быстрее решить поставленную задачу.
+
+## Вывод
+
+В лабораторной работе я написал код на языке R для автоматизированного поиска информации
